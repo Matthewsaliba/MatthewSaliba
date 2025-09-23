@@ -1,5 +1,5 @@
 import aws_cdk as cdk
-from week2work.pipeline_stack import PipelineStack
+from pipeline_stack import PipelineStack
 
 
 app = cdk.App()
