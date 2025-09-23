@@ -34,14 +34,28 @@ class PipelineStack(Stack):
         #  Beta Stage 
         beta = ApplicationStage(self, "Beta")
         beta_stage = pipeline.add_stage(beta)
-        beta_stage.add_pre(pipelines.ShellStep("BetaTest", commands=["pytest tests/beta"]))
-
+        beta_stage.add_pre(pipelines.ShellStep("BetaTest",
+    commands=[
+        "pip install -r requirements-dev.txt",
+        "pytest tests/beta"
+    ]
+))
         # Gamma Stage
         gamma = ApplicationStage(self, "Gamma")
         gamma_stage = pipeline.add_stage(gamma)
-        gamma_stage.add_pre(pipelines.ShellStep("GammaTest", commands=["pytest tests/gamma"]))
-
+        gamma_stage.add_pre(pipelines.ShellStep("GammaTest",
+    commands=[
+        "pip install -r requirements-dev.txt",
+        "pytest tests/gamma"
+    ]
+))
         # Prod Stage
         prod = ApplicationStage(self, "Prod")
         prod_stage = pipeline.add_stage(prod)
-        prod_stage.add_pre(pipelines.ShellStep("ProdTest", commands=["pytest tests/prod"]))
+      
+        prod_stage.add_pre(pipelines.ShellStep("ProdTest",
+    commands=[
+        "pip install -r requirements-dev.txt",
+        "pytest tests/prod"
+    ]
+))
