@@ -5,7 +5,7 @@ from aws_cdk import (
     SecretValue,
 )
 from constructs import Construct
-from .application_stage import ApplicationStage 
+from application_stage import ApplicationStage 
 
 
 class PipelineStack(Stack):

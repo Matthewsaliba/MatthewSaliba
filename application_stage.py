@@ -1,6 +1,6 @@
 from aws_cdk import Stage, Environment
 from constructs import Construct
-from .application_stack import ApplicationStack
+from application_stack import ApplicationStack
 
 
 class ApplicationStage(Stage):
