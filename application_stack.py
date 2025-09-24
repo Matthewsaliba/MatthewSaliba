@@ -17,7 +17,7 @@ class ApplicationStack(Stack):
             self, "CanaryFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="canary.lambda_handler",
-            code=_lambda.Code.from_asset("lambda/canary"),
+            code=_lambda.Code.from_asset("lambda_22128867/canary"),
             environment={
                 "TARGET_URL": "https://www.bbc.com/",
                 "ALERT_TOPIC_ARN": alert_topic.topic_arn
