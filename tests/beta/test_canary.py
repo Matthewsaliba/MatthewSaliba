@@ -8,7 +8,7 @@ from lambda_22128867.canary import canary
 
 
 
-import canary
+
 import pytest
 from unittest.mock import patch, MagicMock
 
