@@ -8,7 +8,6 @@ from aws_cdk import (
     aws_sns_subscriptions as subs,
     aws_iam as iam,
     aws_dynamodb as dynamodb,
-    aws_lambda_event_sources as lambda_event_sources,
     Stack,
     Duration,
 )
@@ -20,7 +19,8 @@ class CanaryWithSmsStack(Stack):
     def __init__(self, scope: Construct, id: str, **kwargs):
         super().__init__(scope, id, **kwargs)
 
-    
+        self.added_alarm_permissions = set()  
+
         self.alarm_log_table = dynamodb.Table(
             self, "AlarmLogTable",
             partition_key={"name": "alarmName", "type": dynamodb.AttributeType.STRING},
@@ -28,7 +28,6 @@ class CanaryWithSmsStack(Stack):
             billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
         )
 
- 
         self.alarm_logger_fn = self.create_alarm_logger_lambda(self.alarm_log_table)
 
         alert_topic = self.create_alert_topic()
@@ -55,7 +54,7 @@ class CanaryWithSmsStack(Stack):
         fn = _lambda.Function(self, f"CanaryFunction_{site_id}",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="canary.lambda_handler",
-            code=_lambda.Code.from_asset("lambda/canary"),
+            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/canary"),
             timeout=Duration.seconds(30),
             environment={
                 "TARGET_URL": target_url,
@@ -97,8 +96,17 @@ class CanaryWithSmsStack(Stack):
             alarm_description=f"Alarm if page {target_url} fails to load in a 5-minute window",
         )
 
-
         alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
+
+        permission_id = f"AlarmPermission_{site_id}"
+        if permission_id not in self.added_alarm_permissions:
+            self.alarm_logger_fn.add_permission(
+                permission_id,  
+                principal=iam.ServicePrincipal("cloudwatch.amazonaws.com"),
+                action="lambda:InvokeFunction",
+                source_arn=alarm.alarm_arn
+            )
+            self.added_alarm_permissions.add(permission_id)
 
         alarm.add_alarm_action(cw_actions.LambdaAction(self.alarm_logger_fn))
 
@@ -108,13 +116,12 @@ class CanaryWithSmsStack(Stack):
         fn = _lambda.Function(self, "AlarmLoggerFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="alarm_logger.lambda_handler",
-            code=_lambda.Code.from_asset("lambda/alarm_logger"),
+            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/alarm_logger"),
             timeout=Duration.seconds(15),
             environment={
                 "TABLE_NAME": table.table_name
             }
         )
-
 
         table.grant_write_data(fn)
 
