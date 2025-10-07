@@ -34,6 +34,7 @@ def test_put_metrics_success(mock_put_metric_data):
     "https://www.bbc.com/", 
     latency=0.1, 
     page_loaded=1, 
+    tti=0.05,
     mem_mb=50,            
     time_to_process=0.03  
 )
