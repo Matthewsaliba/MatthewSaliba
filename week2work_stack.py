@@ -33,8 +33,6 @@ class CanaryWithSmsStack(Stack):
         self.rollback_fn = self.create_rollback_lambda()
         alert_topic.add_subscription(subs.LambdaSubscription(self.rollback_fn))
 
-        self.create_operational_alarms(alert_topic)
-
         urls = [
             "https://www.smh.com.au/",
             "https://www.bbc.com/",
@@ -47,6 +45,7 @@ class CanaryWithSmsStack(Stack):
             self.grant_permissions(fn, alert_topic)
             self.create_schedule_rule(fn, site_id)
             self.create_page_load_alarm(alert_topic, url, site_id)
+            self.create_operational_alarms(alert_topic, url, site_id)
 
     def create_alert_topic(self):
         topic = sns.Topic(self, "PageLoadAlertTopic")
@@ -59,6 +58,8 @@ class CanaryWithSmsStack(Stack):
             handler="canary.lambda_handler",
             code=_lambda.Code.from_asset("./lambda_22128867/canary"),
             timeout=Duration.seconds(30),
+
+
             environment={
                 "TARGET_URL": target_url,
                 "ALERT_TOPIC_ARN": alert_topic.topic_arn
@@ -104,6 +105,37 @@ class CanaryWithSmsStack(Stack):
 
         return alarm
 
+    def create_operational_alarms(self, alert_topic, target_url, site_id):
+        mem_alarm = cloudwatch.Alarm(self, f"MemoryHigh_{site_id}",
+            metric=cloudwatch.Metric(
+                namespace="CustomCanary",
+                metric_name="MemoryUsageMB",
+                dimensions_map={"URL": target_url},
+                period=Duration.minutes(5),
+                statistic="Average"
+            ),
+            threshold=200,  # MB
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            alarm_description=f"Alarm if crawler memory usage for {target_url} exceeds 200 MB"
+        )
+        mem_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
+
+        time_alarm = cloudwatch.Alarm(self, f"TimeToProcessHigh_{site_id}",
+            metric=cloudwatch.Metric(
+                namespace="CustomCanary",
+                metric_name="TimeToProcess",
+                dimensions_map={"URL": target_url},
+                period=Duration.minutes(5),
+                statistic="Average"
+            ),
+            threshold=300,  # seconds
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            alarm_description=f"Alarm if crawler processing time for {target_url} exceeds 5 minutes"
+        )
+        time_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
+
     def create_alarm_logger_lambda(self, table):
         fn = _lambda.Function(self, "AlarmLoggerFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
@@ -118,35 +150,6 @@ class CanaryWithSmsStack(Stack):
         table.grant_write_data(fn)
 
         return fn
-
-    def create_operational_alarms(self, alert_topic):
-        mem_alarm = cloudwatch.Alarm(self, "CrawlerMemoryHigh",
-            metric=cloudwatch.Metric(
-                namespace="CustomCanary",
-                metric_name="MemoryUsageMB",
-                period=Duration.minutes(5),
-                statistic="Average"
-            ),
-            threshold=200,  # MB
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            alarm_description="Alarm if crawler memory usage exceeds 200 MB"
-        )
-        mem_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
-
-        time_alarm = cloudwatch.Alarm(self, "CrawlerTimeToProcessHigh",
-            metric=cloudwatch.Metric(
-                namespace="CustomCanary",
-                metric_name="TimeToProcess",
-                period=Duration.minutes(5),
-                statistic="Average"
-            ),
-            threshold=300,  # seconds
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            alarm_description="Alarm if crawler processing time exceeds 5 minutes"
-        )
-        time_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
 
     def create_rollback_lambda(self):
         fn = _lambda.Function(self, "RollbackFunction",
