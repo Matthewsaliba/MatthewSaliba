@@ -2,7 +2,7 @@ import os
 import urllib.request
 import time
 import boto3
-import psutil
+import resource
 from botocore.exceptions import ClientError
 
 cloudwatch = boto3.client("cloudwatch")
@@ -12,7 +12,6 @@ TARGET_URL = os.environ.get("TARGET_URL")
 ALERT_TOPIC_ARN = os.environ.get("ALERT_TOPIC_ARN")
 
 def check_page_load(url, timeout=10):
-    """Attempts to load the page and returns (status_code, page_loaded, tti)."""
     try:
         start_tti = time.time()
         response = urllib.request.urlopen(url, timeout=timeout)
@@ -26,8 +25,11 @@ def check_page_load(url, timeout=10):
         tti = 0
     return status_code, page_loaded, tti
 
+def get_memory_usage():
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return usage / 1024
+
 def put_metrics(url, latency, page_loaded, tti, mem_mb, time_to_process):
-    """Sends metrics to CloudWatch."""
     try:
         cloudwatch.put_metric_data(
             Namespace='CustomCanary',
@@ -68,7 +70,6 @@ def put_metrics(url, latency, page_loaded, tti, mem_mb, time_to_process):
         print(f"Failed to put metrics: {e}")
 
 def send_alert(topic_arn, url):
-    """Sends an alert via SNS."""
     try:
         sns.publish(
             TopicArn=topic_arn,
@@ -84,10 +85,7 @@ def lambda_handler(event, context):
     status_code, page_loaded, tti = check_page_load(TARGET_URL)
     latency = time.time() - start_time
 
-
-    process = psutil.Process()
-    mem_bytes = process.memory_info().rss
-    mem_mb = mem_bytes / (1024 * 1024)
+    mem_mb = get_memory_usage()
 
     time_to_process = time.time() - start_time
 
