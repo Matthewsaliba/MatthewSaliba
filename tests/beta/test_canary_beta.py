@@ -30,7 +30,7 @@ def test_check_page_load_failure():
 
 @patch('lambda_22128867.canary.canary.cloudwatch.put_metric_data')
 def test_put_metrics_success(mock_put_metric_data):
-    canary.put_metrics("https://www.bbc.com/", latency=0.1, page_loaded=1, tti=0.05)
+    canary.put_metrics("https://www.bbc.com/", latency=0.1, page_loaded=1, tti=0.05, mem_mb=50, time_to_process=0.03)
     mock_put_metric_data.assert_called_once()
 
 @patch('lambda_22128867.canary.canary.sns.publish')
