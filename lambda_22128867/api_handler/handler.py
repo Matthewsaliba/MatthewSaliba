@@ -2,7 +2,6 @@ import json
 import os
 import urllib.parse
 import boto3
-from boto3.dynamodb.conditions import Key
 
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table(os.environ['TABLE_NAME'])
@@ -10,6 +9,8 @@ table = dynamodb.Table(os.environ['TABLE_NAME'])
 def lambda_handler(event, context):
     method = event['httpMethod']
     path = event['path']
+    
+    # No need to load body for DELETE method
     body = json.loads(event['body']) if event.get('body') else {}
 
     if method == "GET" and path == "/targets":
