@@ -57,7 +57,7 @@ class CanaryWithSmsStack(Stack):
         fn = _lambda.Function(self, f"CanaryFunction_{site_id}",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="canary.lambda_handler",
-            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/canary"),
+            code=_lambda.Code.from_asset("./lambda_22128867/canary"),
             timeout=Duration.seconds(30),
             environment={
                 "TARGET_URL": target_url,
@@ -108,7 +108,7 @@ class CanaryWithSmsStack(Stack):
         fn = _lambda.Function(self, "AlarmLoggerFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="alarm_logger.lambda_handler",
-            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/alarm_logger"),
+            code=_lambda.Code.from_asset("./lambda_22128867/alarm_logger"),
             timeout=Duration.seconds(15),
             environment={
                 "TABLE_NAME": table.table_name
@@ -152,7 +152,7 @@ class CanaryWithSmsStack(Stack):
         fn = _lambda.Function(self, "RollbackFunction",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="rollback.lambda_handler",
-            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/ca"),
+            code=_lambda.Code.from_asset("./lambda_22128867/canary"),
             timeout=Duration.seconds(30),
             environment={
                 "TABLE_NAME": self.alarm_log_table.table_name,
