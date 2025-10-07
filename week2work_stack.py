@@ -1,170 +1,105 @@
-from aws_cdk import (
-    aws_cloudwatch as cloudwatch,
-    aws_cloudwatch_actions as cw_actions,
-    aws_lambda as _lambda,
-    aws_events as events,
-    aws_events_targets as targets,
-    aws_sns as sns,
-    aws_sns_subscriptions as subs,
-    aws_iam as iam,
-    aws_dynamodb as dynamodb,
-    Stack,
-    Duration,
-)
-from constructs import Construct
-from urllib.parse import urlparse
+import os
+import urllib.request
+import time
+import boto3
+import resource
+from botocore.exceptions import ClientError
 
+cloudwatch = boto3.client("cloudwatch")
+sns = boto3.client("sns")
 
-class CanaryWithSmsStack(Stack):
-    def __init__(self, scope: Construct, id: str, **kwargs):
-        super().__init__(scope, id, **kwargs)
+TARGET_URL = os.environ.get("TARGET_URL")
+ALERT_TOPIC_ARN = os.environ.get("ALERT_TOPIC_ARN")
 
-        self.alarm_log_table = dynamodb.Table(
-            self, "AlarmLogTable",
-            partition_key={"name": "alarmName", "type": dynamodb.AttributeType.STRING},
-            sort_key={"name": "timestamp", "type": dynamodb.AttributeType.STRING},
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+def check_page_load(url, timeout=10):
+    try:
+        start_tti = time.time()
+        response = urllib.request.urlopen(url, timeout=timeout)
+        tti = time.time() - start_tti  
+        status_code = response.getcode()
+        page_loaded = 1 if 200 <= status_code < 400 else 0
+    except Exception as e:
+        print(f"Page load failed: {e}")
+        status_code = 0
+        page_loaded = 0
+        tti = 0
+    return status_code, page_loaded, tti
+
+def get_memory_usage():
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return usage / 1024
+
+def put_metrics(url, latency, page_loaded, tti, mem_mb, time_to_process):
+    try:
+        cloudwatch.put_metric_data(
+            Namespace='CustomCanary',
+            MetricData=[
+                {
+                    'MetricName': 'Latency',
+                    'Dimensions': [{'Name': 'URL', 'Value': url}],
+                    'Value': latency,
+                    'Unit': 'Seconds'
+                },
+                {
+                    'MetricName': 'PageLoadSuccess',
+                    'Dimensions': [{'Name': 'URL', 'Value': url}],
+                    'Value': page_loaded,
+                    'Unit': 'Count'
+                },
+                {
+                    'MetricName': 'TimeToInteractive',
+                    'Dimensions': [{'Name': 'URL', 'Value': url}],
+                    'Value': tti,
+                    'Unit': 'Seconds'
+                },
+                {
+                    'MetricName': 'MemoryUsageMB',
+                    'Dimensions': [{'Name': 'URL', 'Value': url}],
+                    'Value': mem_mb,
+                    'Unit': 'Megabytes'
+                },
+                {
+                    'MetricName': 'TimeToProcess',
+                    'Dimensions': [{'Name': 'URL', 'Value': url}],
+                    'Value': time_to_process,
+                    'Unit': 'Seconds'
+                }
+            ]
         )
+    except ClientError as e:
+        print(f"Failed to put metrics: {e}")
 
-        self.alarm_logger_fn = self.create_alarm_logger_lambda(self.alarm_log_table)
-
-        alert_topic = self.create_alert_topic()
-
-        self.rollback_fn = self.create_rollback_lambda()
-        alert_topic.add_subscription(subs.LambdaSubscription(self.rollback_fn))
-
-        self.create_operational_alarms(alert_topic)
-
-        urls = [
-            "https://www.smh.com.au/",
-            "https://www.bbc.com/",
-            "https://www.nytimes.com/"
-        ]
-
-        for url in urls:
-            site_id = urlparse(url).netloc.replace('.', '_').replace('-', '_')
-            fn = self.create_canary_lambda(alert_topic, url, site_id)
-            self.grant_permissions(fn, alert_topic)
-            self.create_schedule_rule(fn, site_id)
-            self.create_page_load_alarm(alert_topic, url, site_id)
-
-    def create_alert_topic(self):
-        topic = sns.Topic(self, "PageLoadAlertTopic")
-        topic.add_subscription(subs.SmsSubscription("+61405128866"))
-        return topic
-
-    def create_canary_lambda(self, alert_topic, target_url, site_id):
-        fn = _lambda.Function(self, f"CanaryFunction_{site_id}",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="canary.lambda_handler",
-            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/canary"),
-            timeout=Duration.seconds(30),
-            environment={
-                "TARGET_URL": target_url,
-                "ALERT_TOPIC_ARN": alert_topic.topic_arn
-            }
+def send_alert(topic_arn, url):
+    try:
+        sns.publish(
+            TopicArn=topic_arn,
+            Message=f"ALERT: Page {url} could NOT be loaded!",
+            Subject="Canary Page Load Failure"
         )
-        return fn
+    except ClientError as e:
+        print(f"Failed to send SNS alert: {e}")
 
-    def grant_permissions(self, fn, alert_topic):
-        fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["cloudwatch:PutMetricData"],
-            resources=["*"],
-        ))
-        fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["sns:Publish"],
-            resources=[alert_topic.topic_arn],
-        ))
-        alert_topic.grant_publish(fn)
+def lambda_handler(event, context):
+    start_time = time.time()
 
-    def create_schedule_rule(self, fn, site_id):
-        rule = events.Rule(self, f"CanaryScheduleRule_{site_id}",
-            schedule=events.Schedule.rate(Duration.minutes(5))
-        )
-        rule.add_target(targets.LambdaFunction(fn))
-        return rule
+    status_code, page_loaded, tti = check_page_load(TARGET_URL)
+    latency = time.time() - start_time
 
-    def create_page_load_alarm(self, alert_topic, target_url, site_id):
-        alarm = cloudwatch.Alarm(self, f"PageLoadSuccessAlarm_{site_id}",
-            metric=cloudwatch.Metric(
-                namespace="CustomCanary",
-                metric_name="PageLoadSuccess",
-                dimensions_map={"URL": target_url},
-                period=Duration.minutes(5),
-                statistic="Sum"
-            ),
-            threshold=1,
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
-            alarm_description=f"Alarm if page {target_url} fails to load in a 5-minute window",
-        )
+    mem_mb = get_memory_usage()
 
-        alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
-        alarm.add_alarm_action(cw_actions.LambdaAction(self.alarm_logger_fn))
+    time_to_process = time.time() - start_time
 
-        return alarm
+    put_metrics(TARGET_URL, latency, page_loaded, tti, mem_mb, time_to_process)
 
-    def create_alarm_logger_lambda(self, table):
-        fn = _lambda.Function(self, "AlarmLoggerFunction",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="alarm_logger.lambda_handler",
-            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/alarm_logger"),
-            timeout=Duration.seconds(15),
-            environment={
-                "TABLE_NAME": table.table_name
-            }
-        )
+    if page_loaded == 0:
+        send_alert(ALERT_TOPIC_ARN, TARGET_URL)
+        raise Exception(f"Page load failed for {TARGET_URL}")
 
-        table.grant_write_data(fn)
-
-        return fn
-
-    def create_operational_alarms(self, alert_topic):
-        mem_alarm = cloudwatch.Alarm(self, "CrawlerMemoryHigh",
-            metric=cloudwatch.Metric(
-                namespace="CustomCanary",
-                metric_name="MemoryUsageMB",
-                period=Duration.minutes(5),
-                statistic="Average"
-            ),
-            threshold=200,  # MB
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            alarm_description="Alarm if crawler memory usage exceeds 200 MB"
-        )
-        mem_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
-
-        time_alarm = cloudwatch.Alarm(self, "CrawlerTimeToProcessHigh",
-            metric=cloudwatch.Metric(
-                namespace="CustomCanary",
-                metric_name="TimeToProcess",
-                period=Duration.minutes(5),
-                statistic="Average"
-            ),
-            threshold=300,  # seconds
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            alarm_description="Alarm if crawler processing time exceeds 5 minutes"
-        )
-        time_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
-
-    def create_rollback_lambda(self):
-        fn = _lambda.Function(self, "RollbackFunction",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="rollback.lambda_handler",
-            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/canary"),
-            timeout=Duration.seconds(30),
-            environment={
-                "TABLE_NAME": self.alarm_log_table.table_name,
-                "STACK_NAME": self.stack_name
-            }
-        )
-
-        self.alarm_log_table.grant_read_data(fn)
-
-        fn.add_to_role_policy(iam.PolicyStatement(
-            actions=["cloudformation:CancelUpdateStack"],
-            resources=[f"arn:aws:cloudformation:{self.region}:{self.account}:stack/{self.stack_name}/*"]
-        ))
-
-        return fn
+    return {
+        'statusCode': status_code,
+        'latency': latency,
+        'page_loaded': page_loaded,
+        'time_to_interactive': tti,
+        'memory_mb': mem_mb,
+        'time_to_process': time_to_process
+    }
