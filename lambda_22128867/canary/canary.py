@@ -2,6 +2,7 @@ import os
 import urllib.request
 import time
 import boto3
+import psutil
 from botocore.exceptions import ClientError
 
 cloudwatch = boto3.client("cloudwatch")
@@ -25,7 +26,7 @@ def check_page_load(url, timeout=10):
         tti = 0
     return status_code, page_loaded, tti
 
-def put_metrics(url, latency, page_loaded, tti):
+def put_metrics(url, latency, page_loaded, tti, mem_mb, time_to_process):
     """Sends metrics to CloudWatch."""
     try:
         cloudwatch.put_metric_data(
@@ -48,6 +49,18 @@ def put_metrics(url, latency, page_loaded, tti):
                     'Dimensions': [{'Name': 'URL', 'Value': url}],
                     'Value': tti,
                     'Unit': 'Seconds'
+                },
+                {
+                    'MetricName': 'MemoryUsageMB',
+                    'Dimensions': [{'Name': 'URL', 'Value': url}],
+                    'Value': mem_mb,
+                    'Unit': 'Megabytes'
+                },
+                {
+                    'MetricName': 'TimeToProcess',
+                    'Dimensions': [{'Name': 'URL', 'Value': url}],
+                    'Value': time_to_process,
+                    'Unit': 'Seconds'
                 }
             ]
         )
@@ -67,10 +80,18 @@ def send_alert(topic_arn, url):
 
 def lambda_handler(event, context):
     start_time = time.time()
+
     status_code, page_loaded, tti = check_page_load(TARGET_URL)
     latency = time.time() - start_time
 
-    put_metrics(TARGET_URL, latency, page_loaded, tti)
+
+    process = psutil.Process()
+    mem_bytes = process.memory_info().rss
+    mem_mb = mem_bytes / (1024 * 1024)
+
+    time_to_process = time.time() - start_time
+
+    put_metrics(TARGET_URL, latency, page_loaded, tti, mem_mb, time_to_process)
 
     if page_loaded == 0:
         send_alert(ALERT_TOPIC_ARN, TARGET_URL)
@@ -80,7 +101,7 @@ def lambda_handler(event, context):
         'statusCode': status_code,
         'latency': latency,
         'page_loaded': page_loaded,
-        'time_to_interactive': tti
+        'time_to_interactive': tti,
+        'memory_mb': mem_mb,
+        'time_to_process': time_to_process
     }
-
-

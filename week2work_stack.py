@@ -19,8 +19,6 @@ class CanaryWithSmsStack(Stack):
     def __init__(self, scope: Construct, id: str, **kwargs):
         super().__init__(scope, id, **kwargs)
 
-        self.added_alarm_permissions = set()  
-
         self.alarm_log_table = dynamodb.Table(
             self, "AlarmLogTable",
             partition_key={"name": "alarmName", "type": dynamodb.AttributeType.STRING},
@@ -31,6 +29,11 @@ class CanaryWithSmsStack(Stack):
         self.alarm_logger_fn = self.create_alarm_logger_lambda(self.alarm_log_table)
 
         alert_topic = self.create_alert_topic()
+
+        self.rollback_fn = self.create_rollback_lambda()
+        alert_topic.add_subscription(subs.LambdaSubscription(self.rollback_fn))
+
+        self.create_operational_alarms(alert_topic)
 
         urls = [
             "https://www.smh.com.au/",
@@ -97,17 +100,6 @@ class CanaryWithSmsStack(Stack):
         )
 
         alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
-
-        permission_id = f"AlarmPermission_{site_id}"
-        if permission_id not in self.added_alarm_permissions:
-            self.alarm_logger_fn.add_permission(
-                permission_id,  
-                principal=iam.ServicePrincipal("cloudwatch.amazonaws.com"),
-                action="lambda:InvokeFunction",
-                source_arn=alarm.alarm_arn
-            )
-            self.added_alarm_permissions.add(permission_id)
-
         alarm.add_alarm_action(cw_actions.LambdaAction(self.alarm_logger_fn))
 
         return alarm
@@ -124,5 +116,55 @@ class CanaryWithSmsStack(Stack):
         )
 
         table.grant_write_data(fn)
+
+        return fn
+
+    def create_operational_alarms(self, alert_topic):
+        mem_alarm = cloudwatch.Alarm(self, "CrawlerMemoryHigh",
+            metric=cloudwatch.Metric(
+                namespace="CustomCanary",
+                metric_name="MemoryUsageMB",
+                period=Duration.minutes(5),
+                statistic="Average"
+            ),
+            threshold=200,  # MB
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            alarm_description="Alarm if crawler memory usage exceeds 200 MB"
+        )
+        mem_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
+
+        time_alarm = cloudwatch.Alarm(self, "CrawlerTimeToProcessHigh",
+            metric=cloudwatch.Metric(
+                namespace="CustomCanary",
+                metric_name="TimeToProcess",
+                period=Duration.minutes(5),
+                statistic="Average"
+            ),
+            threshold=300,  # seconds
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            alarm_description="Alarm if crawler processing time exceeds 5 minutes"
+        )
+        time_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
+
+    def create_rollback_lambda(self):
+        fn = _lambda.Function(self, "RollbackFunction",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="rollback.lambda_handler",
+            code=_lambda.Code.from_asset("MatthewSaliba/lambda_22128867/canary"),
+            timeout=Duration.seconds(30),
+            environment={
+                "TABLE_NAME": self.alarm_log_table.table_name,
+                "STACK_NAME": self.stack_name
+            }
+        )
+
+        self.alarm_log_table.grant_read_data(fn)
+
+        fn.add_to_role_policy(iam.PolicyStatement(
+            actions=["cloudformation:CancelUpdateStack"],
+            resources=[f"arn:aws:cloudformation:{self.region}:{self.account}:stack/{self.stack_name}/*"]
+        ))
 
         return fn
