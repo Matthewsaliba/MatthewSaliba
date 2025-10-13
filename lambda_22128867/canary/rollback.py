@@ -23,7 +23,7 @@ def lambda_handler(event, context):
         error_msg = str(e)
         print(f"CloudFormation ClientError: {error_msg}")
 
-        if "No update in progress" in error_msg:
+        if "No update in progress" in error_msg or "cannot be called from current stack status" in error_msg:
             print("No update in progress, nothing to cancel.")
             return {"status": "noop", "message": "No update in progress"}
 
