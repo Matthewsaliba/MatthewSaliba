@@ -6,6 +6,7 @@ from aws_cdk import (
     aws_iam as iam,
     Duration
 )
+from aws_cdk.aws_lambda_event_sources import DynamoEventSource
 from constructs import Construct
 
 class CrawlerApiStack(Stack):
@@ -16,8 +17,38 @@ class CrawlerApiStack(Stack):
         table = dynamodb.Table(
             self, "CrawlerTargets",
             partition_key={"name": "url", "type": dynamodb.AttributeType.STRING},
-            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            stream=dynamodb.StreamViewType.NEW_AND_OLD_IMAGES
         )
+        
+
+
+        monitoring_handler_fn = _lambda.Function(
+            self, "MonitoringHandler",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="monitoring_handler.lambda_handler",
+            code=_lambda.Code.from_asset("lambda_22128867"),
+            timeout=Duration.seconds(30),
+            environment={
+                "DASHBOARD_NAME": "APIDashboard"
+            }
+        )
+
+        monitoring_handler_fn.add_event_source(DynamoEventSource(
+    table,
+    starting_position=_lambda.StartingPosition.LATEST
+))
+
+        monitoring_handler_fn.add_to_role_policy(iam.PolicyStatement(
+    actions=[
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:PutDashboard",
+        "cloudwatch:GetDashboard"
+    ],
+    resources=["*"]
+))
+
 
         # Lambda for CRUD operations
         fn = _lambda.Function(
