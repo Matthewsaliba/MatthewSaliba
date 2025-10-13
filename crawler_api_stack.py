@@ -48,3 +48,4 @@ class CrawlerApiStack(Stack):
         target = targets.add_resource("{url}")
         target.add_method("GET")      
         target.add_method("DELETE")  
+        target.add_method("PUT")
